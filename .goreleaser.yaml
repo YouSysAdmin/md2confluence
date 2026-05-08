@@ -1,0 +1,143 @@
+version: 2
+
+project_name: md2confluence
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: md2confluence
+    main: ./cmd/md2confluence
+    binary: md2confluence
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - id: md2confluence
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE*
+
+dockers:
+  - id: linux-amd64
+    goos: linux
+    goarch: amd64
+    ids: [md2confluence]
+    dockerfile: Dockerfile
+    use: docker
+    image_templates:
+      - "ghcr.io/yousysadmin/md2confluence:{{ .Version }}-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.source=https://github.com/yousysadmin/md2confluence"
+      - "--label=org.opencontainers.image.title=md2confluence"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+
+  - id: linux-arm64
+    goos: linux
+    goarch: arm64
+    ids: [md2confluence]
+    dockerfile: Dockerfile
+    use: docker
+    image_templates:
+      - "ghcr.io/yousysadmin/md2confluence:{{ .Version }}-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.source=https://github.com/yousysadmin/md2confluence"
+      - "--label=org.opencontainers.image.title=md2confluence"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.created={{ .Date }}"
+
+# Combine the per-arch images into multi-arch manifests so consumers
+# can pull `:latest` or `:vX.Y.Z` and get the right arch automatically.
+docker_manifests:
+  - name_template: "ghcr.io/yousysadmin/md2confluence:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/yousysadmin/md2confluence:{{ .Version }}-amd64"
+      - "ghcr.io/yousysadmin/md2confluence:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/yousysadmin/md2confluence:latest"
+    image_templates:
+      - "ghcr.io/yousysadmin/md2confluence:{{ .Version }}-amd64"
+      - "ghcr.io/yousysadmin/md2confluence:{{ .Version }}-arm64"
+
+checksum:
+  name_template: "checksums.txt"
+
+# Supply-chain attestation: emit one CycloneDX SBOM per archive (syft).
+sboms:
+  - id: archive
+    artifacts: archive
+
+# Sign the checksums file and the docker manifests with cosign keyless.
+# Verifying consumers can run:
+#   cosign verify-blob --certificate checksums.txt.pem \
+#     --signature checksums.txt.sig \
+#     --certificate-identity-regexp 'https://github.com/yousysadmin/md2confluence/.+' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+#     checksums.txt
+signs:
+  - id: cosign-checksums
+    cmd: cosign
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+    args:
+      - sign-blob
+      - "--output-certificate=${certificate}"
+      - "--output-signature=${signature}"
+      - "${artifact}"
+      - "--yes"
+    artifacts: checksum
+    output: true
+
+docker_signs:
+  - id: cosign-images
+    cmd: cosign
+    args:
+      - sign
+      - "--yes"
+      - "${artifact}@${digest}"
+    artifacts: manifests
+    output: true
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  draft: false
+  prerelease: auto

@@ -1,0 +1,17 @@
+# md2confluence configuration
+# Place this file at ~/.config/md2confluence/config.yaml
+
+email: "your-email@example.com"
+apiToken: "ATATT3xFfGF0EXAMPLE_TOKEN_REPLACE_ME"
+baseUrl: "https://your-domain.atlassian.net/wiki"
+
+spaces:
+  # Example: sync docs/ directory to DOCS space
+  - key: "DOCS"
+    path: "./docs"
+    parentTitle: "Documentation Home"   # optional: pages created under this page
+    autoCreateParent: true              # optional: create parent if missing
+
+  # Example: sync engineering notes to ENG space (no parent)
+  - key: "ENG"
+    path: "./engineering"

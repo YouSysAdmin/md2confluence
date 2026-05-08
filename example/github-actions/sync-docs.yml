@@ -1,0 +1,66 @@
+# Drop this into .github/workflows/sync-docs.yml in the repo whose docs
+# you want pushed to Confluence. Set the three secrets on the repo:
+#   CONFLUENCE_EMAIL, CONFLUENCE_API_TOKEN, CONFLUENCE_BASE_URL
+#
+# Three styles are shown - keep the one that fits your setup, delete the
+# others. They all assume a repo-side `md2confluence.yaml` carrying just
+# the `spaces` mapping (no secrets in the file).
+name: Sync Docs to Confluence
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "md2confluence.yaml"
+  workflow_dispatch:
+
+jobs:
+  # Option A: composite action (shortest) ----------------------------
+  # Recommended for most repos. Pin to a tag (e.g. @v1) for stability.
+  sync-action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: yousysadmin/md2confluence@v1
+        with:
+          email: ${{ secrets.CONFLUENCE_EMAIL }}
+          api-token: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          base-url: ${{ secrets.CONFLUENCE_BASE_URL }}
+          config: ./md2confluence.yaml
+          # Preview without hitting Confluence by setting:
+          # args: --dry-run
+
+  # Option B: job-level container -----------------------------------
+  # Every step in the job runs inside the image, with the repo mounted
+  # at /work. Useful when you want multiple md2confluence steps.
+  sync-container:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/yousysadmin/md2confluence:latest
+    env:
+      MD2CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
+      MD2CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+      MD2CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: md2confluence sync --config ./md2confluence.yaml
+
+  # Option C: docker run step ---------------------------------------
+  # Use when the surrounding job is not containerized (e.g. needs other
+  # tools that aren't in the distroless image).
+  sync-docker-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync to Confluence
+        env:
+          MD2CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
+          MD2CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          MD2CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
+        run: |
+          docker run --rm \
+            -v "$PWD:/work" -w /work \
+            -e MD2CONFLUENCE_EMAIL -e MD2CONFLUENCE_API_TOKEN -e MD2CONFLUENCE_BASE_URL \
+            ghcr.io/yousysadmin/md2confluence:latest \
+            sync --config ./md2confluence.yaml

@@ -1,0 +1,19 @@
+# Example md2confluence config.
+#
+# In real use, keep the three scalar fields out of the file and pass them
+# as environment variables instead:
+#   MD2CONFLUENCE_EMAIL=...
+#   MD2CONFLUENCE_API_TOKEN=...
+#   MD2CONFLUENCE_BASE_URL=...
+# so the committed file contains only the `spaces` mapping.
+
+email: "your-email@example.com"
+apiToken: "ATATT3xFfGF0..."
+baseUrl: "https://your-domain.atlassian.net/wiki"
+
+spaces:
+  - key: "DOCS"
+    path: "./example/docs"
+    parentTitle: "Documentation Home"
+    autoCreateParent: true
+    imageWidth: 760

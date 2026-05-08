@@ -1,0 +1,57 @@
+name: md2confluence
+description: Sync local markdown files to Atlassian Confluence Cloud pages.
+author: yousysadmin
+
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  email:
+    description: Atlassian account email (maps to MD2CONFLUENCE_EMAIL).
+    required: true
+  api-token:
+    description: Atlassian API token (maps to MD2CONFLUENCE_API_TOKEN).
+    required: true
+  base-url:
+    description: Confluence base URL, e.g. https://your-domain.atlassian.net/wiki (maps to MD2CONFLUENCE_BASE_URL).
+    required: true
+  config:
+    description: Path (relative to the repo root) to the md2confluence config file.
+    required: false
+    default: ./md2confluence.yaml
+  command:
+    description: Subcommand to run - sync, upload, or list.
+    required: false
+    default: sync
+  args:
+    description: Extra arguments appended to the command (e.g. "--dry-run", "--space DOCS", or a file path for upload).
+    required: false
+    default: ""
+  image:
+    description: Docker image reference. Override to pin a specific version (e.g. ghcr.io/yousysadmin/md2confluence:v1.2.3) or to use the rolling :master tag.
+    required: false
+    default: ghcr.io/yousysadmin/md2confluence:latest
+
+runs:
+  using: composite
+  steps:
+    - name: Run md2confluence
+      shell: bash
+      env:
+        MD2CONFLUENCE_EMAIL: ${{ inputs.email }}
+        MD2CONFLUENCE_API_TOKEN: ${{ inputs.api-token }}
+        MD2CONFLUENCE_BASE_URL: ${{ inputs.base-url }}
+        INPUT_IMAGE: ${{ inputs.image }}
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_ARGS: ${{ inputs.args }}
+      run: |
+        set -euo pipefail
+        docker run --rm \
+          -v "${{ github.workspace }}:/work" -w /work \
+          -e MD2CONFLUENCE_EMAIL \
+          -e MD2CONFLUENCE_API_TOKEN \
+          -e MD2CONFLUENCE_BASE_URL \
+          "$INPUT_IMAGE" \
+          $INPUT_COMMAND --config "$INPUT_CONFIG" $INPUT_ARGS
