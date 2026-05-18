@@ -1,6 +1,8 @@
 package converter
 
 import (
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -143,6 +145,72 @@ func TestLink(t *testing.T) {
 	got := render(t, "[click](https://example.com)\n")
 	if !strings.Contains(got, `<a href="https://example.com">click</a>`) {
 		t.Errorf("link missing:\n%s", got)
+	}
+}
+
+// Relative .md links should resolve to a Confluence page link whose title is
+// the target file's H1.
+func TestInternalMarkdownLinkResolvesToPageLink(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "overview"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "overview", "overview.md"),
+		[]byte("# Overview\n\nbody\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	res, err := ToStorage("See [Overview](./overview/overview.md).\n", Options{BaseDir: dir})
+	if err != nil {
+		t.Fatalf("ToStorage: %v", err)
+	}
+	wants := []string{
+		`<ac:link>`,
+		`<ri:page ri:content-title="Overview"/>`,
+		`<ac:plain-text-link-body><![CDATA[Overview]]></ac:plain-text-link-body>`,
+		`</ac:link>`,
+	}
+	for _, w := range wants {
+		if !strings.Contains(res.Storage, w) {
+			t.Errorf("missing %q in:\n%s", w, res.Storage)
+		}
+	}
+}
+
+// Anchor fragments on internal links are passed through as ac:anchor so the
+// link still lands on the right heading section after publishing.
+func TestInternalMarkdownLinkPreservesAnchor(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "guide.md"), []byte("# Guide\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	res, err := ToStorage("[jump](./guide.md#section-two)\n", Options{BaseDir: dir})
+	if err != nil {
+		t.Fatalf("ToStorage: %v", err)
+	}
+	if !strings.Contains(res.Storage, `<ac:link ac:anchor="section-two">`) {
+		t.Errorf("anchor missing:\n%s", res.Storage)
+	}
+}
+
+// Missing target files fall back to a plain href so the broken link stays
+// visible rather than silently pointing at a non-existent page.
+func TestInternalMarkdownLinkMissingFileFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	res, err := ToStorage("[gone](./nope.md)\n", Options{BaseDir: dir})
+	if err != nil {
+		t.Fatalf("ToStorage: %v", err)
+	}
+	if !strings.Contains(res.Storage, `<a href="./nope.md">gone</a>`) {
+		t.Errorf("expected plain anchor fallback:\n%s", res.Storage)
+	}
+}
+
+// Remote URLs and non-markdown paths stay as ordinary <a href> links.
+func TestExternalLinkUnchanged(t *testing.T) {
+	got := render(t, "[ext](./image.png)\n")
+	if !strings.Contains(got, `<a href="./image.png">ext</a>`) {
+		t.Errorf("expected plain anchor for non-md path:\n%s", got)
 	}
 }
 

@@ -13,6 +13,8 @@ import (
 	"github.com/yuin/goldmark/extension"
 	extast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/text"
+
+	"github.com/yousysadmin/md2confluence/internal/scanner"
 )
 
 // Options tunes how a markdown document is rendered to storage format.
@@ -157,7 +159,23 @@ func (r *confluenceRenderer) visit(w *bytes.Buffer, source []byte, n ast.Node, e
 
 	case *ast.Link:
 		if entering {
-			fmt.Fprintf(w, `<a href="%s">`, escapeXMLAttr(string(n.Destination)))
+			dest := string(n.Destination)
+			if title, anchor := r.resolveInternalLink(dest); title != "" {
+				text := string(nodeText(n, source))
+				if text == "" {
+					text = title
+				}
+				w.WriteString("<ac:link")
+				if anchor != "" {
+					fmt.Fprintf(w, ` ac:anchor="%s"`, escapeXMLAttr(anchor))
+				}
+				w.WriteString(">")
+				fmt.Fprintf(w, `<ri:page ri:content-title="%s"/>`, escapeXMLAttr(title))
+				fmt.Fprintf(w, `<ac:plain-text-link-body><![CDATA[%s]]></ac:plain-text-link-body>`, escapeCDATA(text))
+				w.WriteString("</ac:link>")
+				return ast.WalkSkipChildren, nil
+			}
+			fmt.Fprintf(w, `<a href="%s">`, escapeXMLAttr(dest))
 		} else {
 			w.WriteString("</a>")
 		}
@@ -290,6 +308,54 @@ func (r *confluenceRenderer) visit(w *bytes.Buffer, source []byte, n ast.Node, e
 	}
 
 	return ast.WalkContinue, nil
+}
+
+// resolveInternalLink reports whether dest is a relative link to a local
+// markdown file. When it is, returns the page title to link to (from the
+// target file's H1 or its filename fallback) plus any URL fragment to pass
+// through as ac:anchor. Returns empty title when dest is not an internal
+// markdown ref or the target file is missing.
+func (r *confluenceRenderer) resolveInternalLink(dest string) (title, anchor string) {
+	pathPart := dest
+	if i := strings.Index(dest, "#"); i >= 0 {
+		pathPart = dest[:i]
+		anchor = dest[i+1:]
+	}
+	if pathPart == "" {
+		return "", ""
+	}
+	lower := strings.ToLower(pathPart)
+	if isRemoteURL(pathPart) || strings.HasPrefix(lower, "mailto:") {
+		return "", ""
+	}
+	if !strings.HasSuffix(lower, ".md") && !strings.HasSuffix(lower, ".markdown") {
+		return "", ""
+	}
+	abs := pathPart
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(r.baseDir, pathPart)
+	}
+	abs = filepath.Clean(abs)
+	if _, err := os.Stat(abs); err != nil {
+		return "", ""
+	}
+	base := filepath.Base(abs)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	fallback := stem
+	// {dirname}.md and index.md are directory-page content files; their
+	// fallback should be the dirname so the link still resolves when the
+	// target file has no H1.
+	parent := filepath.Base(filepath.Dir(abs))
+	if strings.EqualFold(stem, "index") || strings.EqualFold(stem, parent) {
+		fallback = parent
+	}
+	return scanner.ResolveTitle(abs, fallback), anchor
+}
+
+// escapeCDATA splits the forbidden CDATA terminator across two sections so
+// arbitrary text can be safely embedded inside ![CDATA[...]].
+func escapeCDATA(s string) string {
+	return strings.ReplaceAll(s, "]]>", "]]]]><![CDATA[>")
 }
 
 // writeImage emits the Confluence storage XML for an image node and, if the

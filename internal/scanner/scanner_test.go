@@ -38,7 +38,7 @@ func TestResolveTitleFromH1(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x.md")
 	writeFile(t, p, "intro line\n\n# Real Title\n\nbody\n")
-	if got := resolveTitle(p, "fallback"); got != "Real Title" {
+	if got := ResolveTitle(p, "fallback"); got != "Real Title" {
 		t.Errorf("got %q, want Real Title", got)
 	}
 }
@@ -47,7 +47,7 @@ func TestResolveTitleSkipsHeadingsInsideCodeFence(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x.md")
 	writeFile(t, p, "```\n# Not A Title\n```\n\n# Real Title\n")
-	if got := resolveTitle(p, "fallback"); got != "Real Title" {
+	if got := ResolveTitle(p, "fallback"); got != "Real Title" {
 		t.Errorf("got %q, want Real Title", got)
 	}
 }
@@ -56,13 +56,13 @@ func TestResolveTitleFallback(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x.md")
 	writeFile(t, p, "no heading here\n")
-	if got := resolveTitle(p, "my-page"); got != "My-Page" {
+	if got := ResolveTitle(p, "my-page"); got != "My-Page" {
 		t.Errorf("got %q, want My-Page", got)
 	}
 }
 
 func TestResolveTitleMissingFile(t *testing.T) {
-	if got := resolveTitle("/nonexistent/x.md", "my page"); got != "My Page" {
+	if got := ResolveTitle("/nonexistent/x.md", "my page"); got != "My Page" {
 		t.Errorf("got %q, want My Page", got)
 	}
 }

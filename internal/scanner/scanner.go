@@ -79,7 +79,7 @@ func buildDirNode(dir string) (*Node, error) {
 	contentPath := findContentFile(dir, entries, dirName)
 
 	node := &Node{
-		Title:       resolveTitle(contentPath, dirName),
+		Title:       ResolveTitle(contentPath, dirName),
 		ContentPath: contentPath,
 		BaseDir:     dir,
 	}
@@ -108,7 +108,7 @@ func buildDirNode(dir string) (*Node, error) {
 		}
 		stem := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
 		node.Children = append(node.Children, &Node{
-			Title:       resolveTitle(path, stem),
+			Title:       ResolveTitle(path, stem),
 			ContentPath: path,
 			BaseDir:     dir,
 		})
@@ -153,16 +153,16 @@ func ScanSingleFile(filePath string) (*Node, error) {
 	}
 	stem := strings.TrimSuffix(filepath.Base(absPath), filepath.Ext(absPath))
 	return &Node{
-		Title:       resolveTitle(absPath, stem),
+		Title:       ResolveTitle(absPath, stem),
 		ContentPath: absPath,
 		BaseDir:     filepath.Dir(absPath),
 	}, nil
 }
 
-// resolveTitle returns the page title for a markdown file:
+// ResolveTitle returns the page title for a markdown file:
 // the first H1 heading encountered outside a fenced code block, or the
 // title-cased fallback if no heading exists or the file is absent.
-func resolveTitle(contentPath, fallback string) string {
+func ResolveTitle(contentPath, fallback string) string {
 	fallbackTitle := titleCase(fallback)
 	if contentPath == "" {
 		return fallbackTitle

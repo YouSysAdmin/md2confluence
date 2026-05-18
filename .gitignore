@@ -2,3 +2,4 @@
 .code-review-graph/
 config-dev.yaml
 .mcp.json
+bin/**

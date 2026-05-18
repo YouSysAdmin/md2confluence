@@ -186,16 +186,37 @@ func renderNode(n *scanner.Node, defaultImageWidth int) (string, []converter.Loc
 func writePage(client *confluence.Client, spaceID, parentID, title, storage string, existing *confluence.Page) (string, error) {
 	body := confluence.BodyWrite{Representation: "storage", Value: storage}
 	if existing != nil {
+		// When the caller has no parent to enforce (root of a scanned tree),
+		// preserve the page's current parent. Omitting parentId via omitempty
+		// causes v2 to treat the update as a move to space root, which fails
+		// with "parent-child loop" whenever the existing page already has
+		// descendants pointing back at the proposed location.
+		targetParent := parentID
+		if targetParent == "" {
+			targetParent = existing.ParentID
+		}
 		req := &confluence.UpdateRequest{
 			ID:       existing.ID,
 			Status:   "current",
 			Title:    title,
 			SpaceID:  spaceID,
-			ParentID: parentID,
+			ParentID: targetParent,
 			Body:     body,
 			Version:  confluence.Version{Number: existing.Version.Number + 1},
 		}
 		if _, err := client.UpdatePage(existing.ID, req); err != nil {
+			// A reparent that would create a loop (proposed parent is a
+			// descendant of this page) cannot succeed; preserve the current
+			// parent so at least the content update lands.
+			if targetParent != existing.ParentID && isParentLoopError(err) {
+				fmt.Fprintf(os.Stderr, "Warning: cannot reparent %q to %s (would create a loop) - preserving current parent %s\n",
+					title, targetParent, existing.ParentID)
+				req.ParentID = existing.ParentID
+				if _, err2 := client.UpdatePage(existing.ID, req); err2 != nil {
+					return "", err2
+				}
+				return existing.ID, nil
+			}
 			return "", err
 		}
 		return existing.ID, nil
@@ -212,6 +233,12 @@ func writePage(client *confluence.Client, spaceID, parentID, title, storage stri
 		return "", err
 	}
 	return page.ID, nil
+}
+
+// isParentLoopError reports whether err is the Confluence 400 response that
+// rejects a parent change because it would create a parent-child loop.
+func isParentLoopError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "parent-child loop")
 }
 
 // pageIsUnchanged reports whether an existing Confluence page already holds
