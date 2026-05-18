@@ -88,6 +88,13 @@ type confluenceRenderer struct {
 	defaultWidth int
 	images       []LocalImage
 	seen         map[string]bool
+	// linkInternalStack tracks per-link whether the open emitted an <ac:link>
+	// (true) or a plain <a> (false). goldmark's ast.Walk always invokes the
+	// leaving call even when we return WalkSkipChildren, so the close branch
+	// needs to know which open tag to match - emitting </a> after an
+	// <ac:link> would produce malformed storage XML that Confluence rejects
+	// with HTTP 400 "unsupported extensions".
+	linkInternalStack []bool
 	// warnedRawHTML is set when the document contained inline HTML or an
 	// HTML block. Confluence storage format only accepts a small subset of
 	// HTML, so unknown tags can fail with HTTP 400 ("unsupported extensions").
@@ -173,11 +180,17 @@ func (r *confluenceRenderer) visit(w *bytes.Buffer, source []byte, n ast.Node, e
 				fmt.Fprintf(w, `<ri:page ri:content-title="%s"/>`, escapeXMLAttr(title))
 				fmt.Fprintf(w, `<ac:plain-text-link-body><![CDATA[%s]]></ac:plain-text-link-body>`, escapeCDATA(text))
 				w.WriteString("</ac:link>")
+				r.linkInternalStack = append(r.linkInternalStack, true)
 				return ast.WalkSkipChildren, nil
 			}
 			fmt.Fprintf(w, `<a href="%s">`, escapeXMLAttr(dest))
+			r.linkInternalStack = append(r.linkInternalStack, false)
 		} else {
-			w.WriteString("</a>")
+			internal := r.linkInternalStack[len(r.linkInternalStack)-1]
+			r.linkInternalStack = r.linkInternalStack[:len(r.linkInternalStack)-1]
+			if !internal {
+				w.WriteString("</a>")
+			}
 		}
 
 	case *ast.AutoLink:

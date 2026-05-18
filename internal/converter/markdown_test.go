@@ -177,6 +177,27 @@ func TestInternalMarkdownLinkResolvesToPageLink(t *testing.T) {
 	}
 }
 
+// Regression: ast.Walk still fires the leaving callback after we return
+// WalkSkipChildren on entering, so the close branch must not emit </a> for an
+// internal link that opened with <ac:link>. A stray </a> produced malformed
+// storage XML and Confluence rejected the page with 400 "unsupported extensions".
+func TestInternalMarkdownLinkNoStrayClosingAnchor(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "global.md"), []byte("# Global\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	res, err := ToStorage("- [Global](./global.md) — text\n", Options{BaseDir: dir})
+	if err != nil {
+		t.Fatalf("ToStorage: %v", err)
+	}
+	if strings.Contains(res.Storage, "</ac:link></a>") {
+		t.Errorf("stray </a> after </ac:link>:\n%s", res.Storage)
+	}
+	if strings.Count(res.Storage, "</a>") != 0 {
+		t.Errorf("internal-only link should not produce any </a>:\n%s", res.Storage)
+	}
+}
+
 // Anchor fragments on internal links are passed through as ac:anchor so the
 // link still lands on the right heading section after publishing.
 func TestInternalMarkdownLinkPreservesAnchor(t *testing.T) {
