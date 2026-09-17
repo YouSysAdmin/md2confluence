@@ -2,6 +2,7 @@ package confluence
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -57,7 +58,7 @@ func NewClient(baseURL, email, token string) *Client {
 //
 // body, if non-nil, must implement io.Seeker (e.g. *bytes.Reader) so it can
 // be rewound between retries. All callers pass bytes.NewReader, which is fine.
-func (c *Client) doRequest(method, reqURL string, body io.Reader) (*http.Response, error) {
+func (c *Client) doRequest(ctx context.Context, method, reqURL string, body io.Reader) (*http.Response, error) {
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if body != nil {
@@ -70,7 +71,7 @@ func (c *Client) doRequest(method, reqURL string, body io.Reader) (*http.Respons
 			}
 		}
 
-		req, err := http.NewRequest(method, reqURL, body)
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 		if err != nil {
 			return nil, fmt.Errorf("create request: %w", err)
 		}
@@ -81,9 +82,15 @@ func (c *Client) doRequest(method, reqURL string, body io.Reader) (*http.Respons
 
 		resp, err := c.http.Do(req)
 		if err != nil {
+			// A cancelled or expired context is never transient: stop immediately.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			lastErr = fmt.Errorf("execute request: %w", err)
 			if attempt < maxAttempts {
-				time.Sleep(backoffDelay(attempt, 0))
+				if err := sleepCtx(ctx, backoffDelay(attempt, 0)); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			return nil, lastErr
@@ -92,7 +99,9 @@ func (c *Client) doRequest(method, reqURL string, body io.Reader) (*http.Respons
 		if shouldRetryStatus(resp.StatusCode) && attempt < maxAttempts {
 			wait := backoffDelay(attempt, retryAfter(resp))
 			resp.Body.Close()
-			time.Sleep(wait)
+			if err := sleepCtx(ctx, wait); err != nil {
+				return nil, err
+			}
 			continue
 		}
 
@@ -110,6 +119,19 @@ func (c *Client) doRequest(method, reqURL string, body io.Reader) (*http.Respons
 		return resp, nil
 	}
 	return nil, lastErr
+}
+
+// sleepCtx waits for d or until ctx is done, returning ctx.Err() in the
+// latter case so callers can abort a retry loop promptly on Ctrl-C.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // shouldRetryStatus reports whether status is a transient HTTP error we should
@@ -159,10 +181,10 @@ func backoffDelay(attempt int, hint time.Duration) time.Duration {
 
 // LookupSpaceID resolves a human-readable space key (e.g. "DOCS") to its numeric-string space ID.
 // v2 endpoints identify spaces by ID, not key.
-func (c *Client) LookupSpaceID(key string) (string, error) {
+func (c *Client) LookupSpaceID(ctx context.Context, key string) (string, error) {
 	u := fmt.Sprintf("%s/api/v2/spaces?keys=%s&limit=1", c.BaseURL, urlEncode(key))
 
-	resp, err := c.doRequest("GET", u, nil)
+	resp, err := c.doRequest(ctx, "GET", u, nil)
 	if err != nil {
 		return "", fmt.Errorf("lookup space %q: %w", key, err)
 	}
@@ -183,11 +205,11 @@ func (c *Client) LookupSpaceID(key string) (string, error) {
 // SearchPage finds a page by space ID and title. Returns nil (no error) when not found.
 // The storage-format body is requested inline so callers can diff it against a
 // freshly rendered body to skip no-op updates.
-func (c *Client) SearchPage(spaceID, title string) (*Page, error) {
+func (c *Client) SearchPage(ctx context.Context, spaceID, title string) (*Page, error) {
 	u := fmt.Sprintf("%s/api/v2/pages?space-id=%s&title=%s&body-format=storage&limit=1",
 		c.BaseURL, spaceID, urlEncode(title))
 
-	resp, err := c.doRequest("GET", u, nil)
+	resp, err := c.doRequest(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("search page: %w", err)
 	}
@@ -206,7 +228,7 @@ func (c *Client) SearchPage(spaceID, title string) (*Page, error) {
 }
 
 // CreatePage creates a new Confluence page.
-func (c *Client) CreatePage(req *CreateRequest) (*Page, error) {
+func (c *Client) CreatePage(ctx context.Context, req *CreateRequest) (*Page, error) {
 	u := c.BaseURL + "/api/v2/pages"
 
 	bodyBytes, err := json.Marshal(req)
@@ -214,7 +236,7 @@ func (c *Client) CreatePage(req *CreateRequest) (*Page, error) {
 		return nil, fmt.Errorf("marshal create request: %w", err)
 	}
 
-	resp, err := c.doRequest("POST", u, bytes.NewReader(bodyBytes))
+	resp, err := c.doRequest(ctx, "POST", u, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create page: %w", err)
 	}
@@ -229,7 +251,7 @@ func (c *Client) CreatePage(req *CreateRequest) (*Page, error) {
 }
 
 // UpdatePage updates an existing Confluence page.
-func (c *Client) UpdatePage(id string, req *UpdateRequest) (*Page, error) {
+func (c *Client) UpdatePage(ctx context.Context, id string, req *UpdateRequest) (*Page, error) {
 	u := fmt.Sprintf("%s/api/v2/pages/%s", c.BaseURL, id)
 
 	bodyBytes, err := json.Marshal(req)
@@ -237,7 +259,7 @@ func (c *Client) UpdatePage(id string, req *UpdateRequest) (*Page, error) {
 		return nil, fmt.Errorf("marshal update request: %w", err)
 	}
 
-	resp, err := c.doRequest("PUT", u, bytes.NewReader(bodyBytes))
+	resp, err := c.doRequest(ctx, "PUT", u, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("update page: %w", err)
 	}
@@ -259,11 +281,11 @@ func urlEncode(s string) string {
 // FindAttachment returns the existing attachment on a page whose title matches
 // filename, or nil (no error) when not found. Uses the Confluence v1 REST API
 // because the v2 attachment endpoints do not cover uploads reliably.
-func (c *Client) FindAttachment(pageID, filename string) (*Attachment, error) {
+func (c *Client) FindAttachment(ctx context.Context, pageID, filename string) (*Attachment, error) {
 	u := fmt.Sprintf("%s/rest/api/content/%s/child/attachment?filename=%s&limit=1",
 		c.BaseURL, pageID, urlEncode(filename))
 
-	resp, err := c.doRequest("GET", u, nil)
+	resp, err := c.doRequest(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, fmt.Errorf("list attachments: %w", err)
 	}
@@ -282,10 +304,10 @@ func (c *Client) FindAttachment(pageID, filename string) (*Attachment, error) {
 // UploadAttachment creates or updates an attachment on a page. If an attachment
 // with the same filename already exists its binary data is replaced, preserving
 // history; otherwise a new attachment is created.
-func (c *Client) UploadAttachment(pageID, filePath string) error {
+func (c *Client) UploadAttachment(ctx context.Context, pageID, filePath string) error {
 	filename := filepath.Base(filePath)
 
-	existing, err := c.FindAttachment(pageID, filename)
+	existing, err := c.FindAttachment(ctx, pageID, filename)
 	if err != nil {
 		return err
 	}
@@ -319,7 +341,7 @@ func (c *Client) UploadAttachment(pageID, filePath string) error {
 		return fmt.Errorf("close multipart: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", endpoint, &body)
+	req, err := http.NewRequestWithContext(ctx, "POST", endpoint, &body)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}

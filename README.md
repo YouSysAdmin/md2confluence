@@ -135,6 +135,33 @@ md2confluence list --space DOCS
 
 Shows each markdown file and whether it already exists on Confluence.
 
+### Machine-readable output
+
+Every command accepts `--output json` (`-o json`) and then prints a single JSON document on stdout, with
+progress lines suppressed. Warnings and errors still go to stderr.
+
+```bash
+md2confluence sync -o json | jq '.stats'
+md2confluence list -o json | jq '.spaces[].tree'
+```
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success (per-page failures are reported and counted as skipped, but do not fail the run) |
+| 1 | Runtime error (config, space lookup, scan failure) |
+| 2 | Usage error (unknown flag or command, missing argument, invalid `--output`, unknown `--space`) |
+| 130 | Interrupted with Ctrl-C / SIGTERM |
+
+### Shell completion
+
+```bash
+source <(md2confluence completion zsh)   # or bash, fish, powershell
+```
+
+`--space` completes with the keys from your config file.
+
 ## How the directory tree maps to pages
 
 Every directory becomes a Confluence page. The page's body comes from:

@@ -1,7 +1,12 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/yousysadmin/md2confluence/internal/cli"
 )
@@ -14,7 +19,16 @@ var (
 )
 
 func main() {
-	if err := cli.Execute(cli.BuildInfo{Version: version, Commit: commit, Date: date}); err != nil {
-		os.Exit(1)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := cli.Execute(ctx, cli.BuildInfo{Version: version, Commit: commit, Date: date})
+	stop()
+	if err == nil {
+		return
 	}
+	if errors.Is(err, context.Canceled) {
+		fmt.Fprintln(os.Stderr, "Interrupted.")
+	} else {
+		fmt.Fprintln(os.Stderr, "Error:", err)
+	}
+	os.Exit(cli.ExitCode(err))
 }

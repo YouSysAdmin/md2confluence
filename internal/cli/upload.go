@@ -5,30 +5,32 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yousysadmin/md2confluence/internal/config"
-	"github.com/yousysadmin/md2confluence/internal/confluence"
 	"github.com/yousysadmin/md2confluence/internal/scanner"
 )
 
-func newUploadCmd(f *flags) *cobra.Command {
+func newUploadCmd(a *app) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "upload [file]",
+		Use:   "upload <file>",
 		Short: "Upload a single markdown file to Confluence",
-		Args:  cobra.ExactArgs(1),
+		Args:  usageArgs(cobra.ExactArgs(1)),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runUpload(f, args[0])
+			return a.runUpload(cmd, args[0])
 		},
 	}
-	cmd.Flags().StringVarP(&f.space, "space", "s", "", "Confluence space key (required)")
-	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "Show what would change without making changes")
+	a.addSpaceFlag(cmd, "Confluence space key (required)")
+	cmd.Flags().BoolVar(&a.dryRun, "dry-run", false, "Print the resolved page without contacting Confluence")
 	_ = cmd.MarkFlagRequired("space")
 	return cmd
 }
 
-func runUpload(f *flags, file string) error {
-	cfg, err := config.Load(f.cfgFile)
+func (a *app) runUpload(cmd *cobra.Command, file string) error {
+	ctx := cmd.Context()
+	out, errOut := cmd.OutOrStdout(), cmd.ErrOrStderr()
+	format, _ := parseOutputFormat(a.output)
+
+	cfg, client, err := a.loadConfig()
 	if err != nil {
-		return fmt.Errorf("load config: %w", err)
+		return err
 	}
 
 	node, err := scanner.ScanSingleFile(file)
@@ -36,22 +38,39 @@ func runUpload(f *flags, file string) error {
 		return fmt.Errorf("scan file: %w", err)
 	}
 
-	client := confluence.NewClient(cfg.BaseURL, cfg.Email, cfg.APIToken)
+	if a.dryRun {
+		if format == formatJSON {
+			return writeJSON(out, struct {
+				DryRun bool        `json:"dryRun"`
+				Spaces []spaceTree `json:"spaces"`
+			}{true, []spaceTree{{Key: a.space, Tree: scannedTree(node)}}})
+		}
+		fmt.Fprintf(out, "[DRY-RUN] Space %s:\n", a.space)
+		printTree(out, node, 0)
+		return nil
+	}
 
-	spaceID, err := client.LookupSpaceID(f.space)
+	spaceID, err := client.LookupSpaceID(ctx, a.space)
 	if err != nil {
 		return fmt.Errorf("resolve space: %w", err)
 	}
 
+	s := &syncer{client: client, out: out, errOut: errOut, format: format}
+
 	var parentID string
 	var imageWidth int
-	if sp := findSpaceConfig(cfg.Spaces, f.space); sp != nil {
+	if sp := findSpaceConfig(cfg.Spaces, a.space); sp != nil {
 		imageWidth = sp.ImageWidth
 		if sp.ParentTitle != "" {
-			parentID = resolveParent(client, spaceID, sp.ParentTitle, sp.AutoCreateParent)
+			parentID, err = s.resolveParent(ctx, spaceID, sp.ParentTitle, sp.AutoCreateParent)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
-	stats := syncStats{}
-	return syncNode(client, spaceID, f.space, parentID, node, imageWidth, &stats)
+	if err := s.syncNode(ctx, spaceID, a.space, parentID, node, imageWidth); err != nil {
+		return err
+	}
+	return s.finish()
 }

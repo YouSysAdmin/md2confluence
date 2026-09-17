@@ -45,6 +45,20 @@ const (
 // ~/.config/md2confluence/config.yaml. A missing config file is tolerated
 // as long as env vars supply the required scalar fields.
 func Load(configPath string) (*Config, error) {
+	cfg, err := Read(configPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// Read loads the config without validating it. Use Load in commands; Read
+// exists for callers such as shell completion that only need whatever is
+// present (e.g. space keys) and must not fail on a missing API token.
+func Read(configPath string) (*Config, error) {
 	v := viper.New()
 	v.SetConfigType(defaultFormat)
 
@@ -77,14 +91,17 @@ func Load(configPath string) (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-
-	if cfg.Email == "" || cfg.APIToken == "" || cfg.BaseURL == "" {
-		return nil, fmt.Errorf("config must have email, apiToken, and baseUrl set (via config file or %s_EMAIL / %s_API_TOKEN / %s_BASE_URL env vars)", EnvPrefix, EnvPrefix, EnvPrefix)
-	}
-
-	if len(cfg.Spaces) == 0 {
-		return nil, fmt.Errorf("config must define at least one space mapping")
-	}
-
 	return &cfg, nil
+}
+
+// Validate reports whether the config carries everything the API client and
+// sync need: credentials, base URL, and at least one space mapping.
+func (c *Config) Validate() error {
+	if c.Email == "" || c.APIToken == "" || c.BaseURL == "" {
+		return fmt.Errorf("config must have email, apiToken, and baseUrl set (via config file or %s_EMAIL / %s_API_TOKEN / %s_BASE_URL env vars)", EnvPrefix, EnvPrefix, EnvPrefix)
+	}
+	if len(c.Spaces) == 0 {
+		return fmt.Errorf("config must define at least one space mapping")
+	}
+	return nil
 }
